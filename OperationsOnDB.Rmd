@@ -1,0 +1,417 @@
+---
+title: "Practicum 2- Group 9"
+output:
+  html_document:
+    df_print: paged
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+**Establishing Database Connectivity**
+
+```{r}
+library(RMySQL)
+conn = dbConnect(MySQL(),user='root',password='Sravya0!',dbname='contacttracing',host= 'localhost')
+conn
+```
+
+
+**TASK 1: Create a View **
+
+View 1: View which holds details of Patient and treatment and drug used for treating the patient
+
+```{sql connection= conn}
+create view PatientTreatmentandDrugDetails as
+SELECT patient.patientID,citizen.name,patientStatus,otherHealthIssues,typeOfTreatment,drug.drugName, citizen.age FROM
+patient,citizen,patienttreatment,treatmentdrug,drug where
+patient.ssn=citizen.ssn and patient.patientid=patienttreatment.patientID and patient.patientID=treatmentdrug.patientID and treatmentdrug.drugID=drug.drugID;
+
+```
+
+View 2: View which hold all the contact Details
+
+```{sql connection= conn}
+CREATE VIEW ContactDetails AS 
+select citizen.ssn,citizen.name,contact.dateOfNotification,contact.endDateOfMonitoring,bodyTemperature,
+showSymptoms,oxygenLevel,wearingMask,socialDistance,riskOfInfection,test.testName,test.testDate,
+test.testResult,citizen.dateOfBirth,citizen.age,citizen.primaryContactNumber,citizen.email from 
+contact inner join citizen on contact.contactID=citizen.ssn inner join contacthealth on 
+contact.contactID=contacthealth.contactID left join contacttest on 
+contact.contactID=contacttest.contactID left join test on contacttest.testID=test.testID;
+
+```
+
+**TASK 2: Queries on the views**
+
+
+Query 1: Information from View 1
+```{sql connection= conn}
+SELECT * FROM PatientTreatmentandDrugDetails
+where drugName= 'Hydroxychloroquine' and patientStatus ='Recovered';
+
+```
+ Query 2: Information frow View 2
+ 
+```{sql connection= conn}
+
+select ssn,name,age,bodyTemperature,oxygenLevel,primaryContactNumber from contactdetails where 
+age>60 or bodyTemperature>100 or oxygenLevel<90; 
+```
+ 
+**TASK 3: CRUD Operations for Patient** 
+
+Add Patient Details
+
+```{r}
+
+addPatient <- function(patient)
+{
+  if( is.null(patient$datedateTestedNegative))
+  {
+     insertQuery<-paste("INSERT INTO patient(patientID, showSymptoms, dateOfSymptoms, severeSymptoms, patientStatus, dateTestedPositive, otherHealthIssues, ssn) VALUES(",patient$patientID,",",patient$showSymptoms,",'", patient$dateOfSymptoms,"',",patient$severeSymptoms,",'",patient$patientStatus,"','", patient$dateTestedPositive,"',",patient$otherHealthIssues,",'",patient$ssn,"');",sep ="")}
+  else
+    { insertQuery<-paste("INSERT INTO patient(patientID, showSymptoms, dateOfSymptoms, severeSymptoms, patientStatus, dateTestedPositive, dateTestedNegative, otherHealthIssues, ssn) VALUES(", patient$patientID,",",patient$showSymptoms,",'", patient$dateOfSymptoms,"',",patient$severeSymptoms,",'",patient$patientStatus,"','", patient$dateTestedPositive,"','",patient$dateTestedNegative,"',",patient$otherHealthIssues,",'",patient$ssn,"');",sep ="") }
+ print(insertQuery)
+ dbSendQuery(conn = conn, insertQuery)
+}
+patientFrame <- data.frame(patientID =1057,showSymptoms = 0,dateOfSymptoms = "2010-12-24",severeSymptoms = 1,patientStatus = "Recovered",dateTestedPositive = "2019-12-30",dateTestedNegative = "2020-01-14",otherHealthIssues = 1, ssn ="YTVB50GK0396")
+
+patientAdd<- addPatient(patientFrame);
+patientAdd 
+```
+
+Viewing the inserted patient details: Read Patient Details
+
+```{r}
+patientIDout <-1057
+viewPatient <- function(patientID)
+{
+  selectQuery <- paste("SELECT * FROM patient WHERE patientID =", patientID, sep = "")
+  resultSet = dbSendQuery(conn = conn, selectQuery)
+  result = fetch(resultSet, -1)
+}
+patientView <- viewPatient(patientIDout)
+patientView
+```
+
+Updating Patient Details
+
+```{r}
+##Viewing the details of the patient to be updated
+readPatient <- viewPatient(1002)
+readPatient
+```
+
+```{r}
+patientIDtoUpdate <- 1002
+updatedPatientStatus <- "Recovered"
+updatedDateTestedNegative <- "2019-12-14"
+UpdatePatient <- function(patientID, patientStatus, dateTestedNegative)
+{
+  if(missing(dateTestedNegative))
+  {
+    updateQuery <- paste("UPDATE patient SET patientStatus ='",patientStatus,"' WHERE patientID =", patientID, sep ="")
+  }
+  else
+  {
+    updateQuery <- paste("UPDATE patient SET patientStatus ='",patientStatus,"',dateTestedNegative = '",dateTestedNegative,"' WHERE patientID =", patientID, sep ="")
+  }
+  ##print(updateQuery)
+  dbSendQuery(conn = conn, updateQuery)
+}
+patientUpdate <- UpdatePatient(patientIDtoUpdate,updatedPatientStatus,updatedDateTestedNegative)
+patientUpdate
+##read the updated Value
+readPatient <- viewPatient(patientIDtoUpdate)  
+readPatient
+```
+
+Remove Patient Details
+
+```{r}
+##Viewing Patient Details to be Deleted
+patientIDtobeDeleted <- 1051
+readPatient <- viewPatient(patientIDtobeDeleted)
+readPatient
+```
+
+```{r}
+patientIDtoDelete <- 1051
+RemovePatient <- function(patientID)
+{
+  deleteQuery <- paste("delete from patient where patientID =", patientID, sep = "")
+  ##print(deleteQuery)
+  dbSendQuery(conn = conn,deleteQuery)
+}
+deletePatient <- RemovePatient(patientIDtoDelete)
+deletePatient
+readPatient <- viewPatient(patientIDtoDelete)
+readPatient ##Returns Empty frame to prove deletion was successful
+```
+
+**TASK 4: Data Integrity Trigger**
+
+```{sql connection=conn}
+
+create trigger ValidateDateTestedNegative Before Insert on patient
+for each row
+begin
+if(new.dateTestedNegative is not null) then
+   if(new.dateTestedNegative < new.dateTestedPositive) then
+        signal sqlstate '45000'  set message_text = 'invalid Date tested Negative' ;
+        end if;
+	end if;
+end
+
+```
+
+```{r}
+tryCatch(dbSendQuery(conn,"INSERT INTO patient(patientID, showSymptoms, dateOfSymptoms, severeSymptoms, patientStatus, dateTestedPositive, dateTestedNegative, otherHealthIssues, ssn) VALUES(2000, 0,'2020-12-24',1, 'Recovered','2019-12-30','2019-11-30',1,'YTVB50GK0396')"), error = function(error){
+  paste("Error occured:", error)
+})
+```
+
+
+![Trigger of Task 4 Working Demonstration screenshot](C:\Users\sravyaburugu\Desktop\DBMSCourse\dataIntegrityTriggerProof.png)
+
+
+**TASK 5: Trigger for Derived Attributes**
+
+Trigger 1: To calculate Age of a patient, contact or healthcareworker In general a citizen
+
+```{sql connection= conn}
+create trigger calculateAge before insert on citizen
+for each row set New.age = floor(datediff(CURDATE(), New.dateOfBirth)/365);
+
+```
+
+```{r}
+tryCatch(dbSendQuery(conn,"INSERT INTO citizen (ssn, name, dateOfBirth, age, primaryContactNumber, email, addressID) VALUES (
+'SRA786BUR832', 'Sravya', '1997-09-01', 22, '8374347745', 'sravya@gmail.com', 307)"), error = function(error){
+  paste("Error occured:", error)}) 
+```
+```{r}
+Query <- dbSendQuery(conn,"SELECT * from citizen where ssn = 'SRA786BUR832'")
+result <- fetch(Query, -1)
+result ##Can see age updated to 22
+```
+
+
+
+![Trigger 1 Working Demonstration screenshot](C:\Users\sravyaburugu\Desktop\DBMSCourse\derivedTrigger1.png)
+
+
+Trigger 2: For estimating an endDateOfMonitoring for a particular Contact
+
+```{sql connection= conn}
+create trigger addEndDateOfMonitoring before insert on contact
+for each row set new.endDateOfMonitoring = DATE_ADD(new.dateOfNotification, INTERVAL 14 DAY);
+```
+
+```{r}
+tryCatch(dbSendQuery(conn,"INSERT INTO contact(contactID, dateOfNotification) values('SRA123QWE234','2020-01-15')"), error = function(error){
+  paste("Error occured:", error)}) 
+```
+```{r}
+Query <- dbSendQuery(conn,"SELECT * from contact where contactID = 'SRA123QWE234'")
+result <- fetch(Query, -1)
+result ##Can see endDateOfNotification calculated
+```
+![Trigger 2 Working Demonstration screenshot](C:\Users\sravyaburugu\Desktop\DBMSCourse\derivedTrigger2.png)
+
+**TASK 6: Stored Procedure for update that spans across multiple tables**
+
+```{sql connection= conn}
+CREATE PROCEDURE updateContactDetails(IN cID varchar(12), IN notifiedDate Date, IN bodyTemp decimal, 
+IN symptom decimal, IN oxyLevel decimal, IN worker int)
+BEGIN
+SET SQL_SAFE_UPDATES = 0;
+    UPDATE contact SET dateOfNotification=notifiedDate WHERE contactID=cID;
+    UPDATE contacthealth SET bodyTemperature=bodyTemp, showSymptoms=symptom,
+    oxygenLevel=oxyLevel WHERE contactID=cID;
+    UPDATE monitorhealth SET workerID=worker where contactID=cID;
+END
+
+```
+
+Stored Procedure Execution Demonstration:
+
+Querying before calling stored Procedure 
+```{sql connection= conn}
+select dateOfNotification, bodyTemperature, showSymptoms, oxygenLevel, workerID from contact c, contacthealth h, monitorhealth m
+where c.contactID= h.contactID and m.contactID = h.contactID and c.contactID = 'ABQX53GI8593';
+
+
+```
+
+Calling Stored Procedure
+
+```{sql connection= conn}
+/*updates contact details with paramenters passed with contactID = ABQX53GI8593 */
+call updateContactDetails('ABQX53GI8593', '2020-01-30',95, 1, 90, 3001);
+```
+
+Viewing updated changes after calling stored Procedure:
+
+```{sql connection= conn}
+select dateOfNotification, bodyTemperature, showSymptoms, oxygenLevel, workerID from contact c, contacthealth h, monitorhealth m
+where c.contactID= h.contactID and m.contactID = h.contactID and c.contactID = 'ABQX53GI8593';
+
+```
+
+
+**TASK 7: Transaction Logic in Stored Procedures for CRUD operations**
+
+Adding all Details of the Patient: Needs addition into Citizen, Patient and Address Table(These are details taken from the patient once he reaches the health department with symptoms)
+```{r}
+AddPatientDetails<- function(address,addressbycity,citizen,patient)
+{
+  
+   Query1 <- paste("insert into address(addressID, locationStreetDetails, populationDensity,       zipCode)values(",address$addressID,",'",address$locationStreetDetails,"','",address$populationDensity,"',",address$zipCode,");", sep = "")
+   
+   Query2 <- paste("insert into addressbycity(addressID, city,state) values(",addressbycity$addressID,",'",addressbycity$city,"','",addressbycity$state,"');",sep = "")
+   
+   Query3 <-paste("Insert into citizen(ssn, name, dateOfBirth, primaryContactNumber, email, addressID) values('",citizen$ssn,"','",citizen$name,"','",citizen$dateOfBirth,"',",citizen$primaryContactNumber,",'",citizen$emailID,"',",citizen$addressID,");",sep ="")
+   
+   Query4<- paste("INSERT INTO patient(patientID, showSymptoms, dateOfSymptoms, severeSymptoms, patientStatus, dateTestedPositive, otherHealthIssues, ssn) VALUES(",patient$patientID,",",patient$showSymptoms,",'", patient$dateOfSymptoms,"',",patient$severeSymptoms,",'",patient$patientStatus,"','", patient$dateTestedPositive,"',",patient$otherHealthIssues,",'",patient$ssn,"');",sep ="")
+   
+   tryCatch(
+     dbWithTransaction(conn,{
+       dbSendQuery(conn,Query1)
+       dbSendQuery(conn,Query2)
+       dbSendQuery(conn,Query3)
+       dbSendQuery(conn,Query4)
+     }),
+     error = function(error){
+       print(paste("Error:",error))
+     }
+   )
+}
+patientPersonalDetails <- data.frame( ssn = 'SRA1234VYA89', name = 'SRAVYA BURUGU',  dateOfBirth = '1997-09-01', primaryContactNumber = 8374347745, emailID = 'sravya@gmail.com',  addressID = 501)
+
+AddressDetailsOfPatient <- data.frame(addressID = 501, locationStreetDetails ='AS Rao Nagar', populationDensity ='Medium',zipCode = 500062)
+
+AddressByCityDetailOfPatient <- data.frame(addressID = 501,city = 'Hyderabad',state = 'Telangana')
+
+patientHealthDetails <- data.frame(patientID=4001, showSymptoms = 1, dateOfSymptoms = '2020-01-15',severeSymptoms = 0,patientStatus = 'Under Treatment', dateTestedPositive = '2020-01-20', otherHealthIssues = 0, ssn = 'SRA1234VYA89')
+
+createPatient <- AddPatientDetails(AddressDetailsOfPatient,AddressByCityDetailOfPatient,patientPersonalDetails,patientHealthDetails)
+createPatient ##if the transaction is successful no error is returned.
+```
+
+Reading all the details of the patient:
+
+```{r}
+readPatientDetails<- function(patientID)
+{
+ tryCatch(
+   dbWithTransaction(conn,{
+     readQuery1 <- paste("select patientID,ssn,showSymptoms,dateOfSymptoms,severeSymptoms,patientStatus,dateTestedPositive, otherHealthIssues from patient where patientID =",patientID,";",sep = "")
+     print(readQuery1)
+     result <- dbSendQuery(conn, readQuery1)
+     patientframe <-  fetch(result,-1)
+     readQuery2 <- paste("select ssn, name, dateOfBirth, primaryContactNumber, addressID from citizen where ssn in ('",patientframe$ssn,"');",sep="")
+     print(readQuery2)
+     result2 <- dbSendQuery(conn,readQuery2)
+     citizenframe <- fetch(result2, -1)
+     readQuery3 <- paste("select addressID, locationStreetDetails, zipCode from address where addressID in ( ",citizenframe$addressID,");",sep = "")
+     print(readQuery3)
+     result3 <- dbSendQuery(conn,readQuery3)
+     addressframe <- fetch(result3, -1)
+     readQuery4 <- paste("select addressID, city, state from addressbycity where addressID in (",citizenframe$addressID,");", sep = "")
+     print(readQuery4)
+     result4 <- dbSendQuery(conn,readQuery4) 
+     addressbyCityframe <- fetch(result4, -1)
+     citizenPatientframe = merge(x = citizenframe , y = patientframe, by = "ssn")
+     patientAddressFrame = merge(x = citizenPatientframe, y = addressframe, by = "addressID")
+     output = merge(x = patientAddressFrame, y = addressbyCityframe, by = "addressID")
+     return(output)
+   }),
+   error = function(error){
+    print(paste("error occured:", error))
+  }
+ )
+}
+patientIDout <- 4001 ##passed the same patientID added in previous chunk to show successful excuetion of add Patient transaction.
+readPatient <- readPatientDetails(patientIDout)
+readPatient  ##if the transaction is successful no error is returned.
+```
+
+Updating Patient Details: patient treament monitored according to severity of symptoms
+
+```{r}
+patientTreatment <- data.frame(severeSymptoms = 1, typeOfTreatment = "ICU")
+print(patientTreatment)
+patientIDtoUpdate <- 1001
+UpdatePatientTreatment <- function(patientID, treatment){
+  tryCatch(dbWithTransaction(conn,{
+                             updateQuery1 <- paste("UPDATE patient set severeSymptoms =",treatment$severeSymptoms, " where patientID = ",patientID, ";",sep ="")
+                             print(updateQuery1)
+                             dbSendQuery(conn,updateQuery1)
+                             updateQuery2 <- paste("UPDATE patientTreatment set typeOfTreatment = '",treatment$typeOfTreatment, "' where patientID =",patientID,";",sep = "")
+                             print(updateQuery2)
+                             dbSendQuery(conn,updateQuery2)
+                             }),
+           error = function(error){
+    print(paste("error occured:", error))}
+  )
+}
+patientTreatmentUpdate <- UpdatePatientTreatment(patientIDtoUpdate,patientTreatment)
+patientTreatmentUpdate   ##if the transaction is successful no error is returned.
+
+```
+
+Deletion of Patient Details is not permissable as deletion of patient can lose data which could be necessary for analysis of the disease
+
+**TASK 8: View the Query Plan**
+
+Query 2: Details of those individuals who became a patient more than once(who got infected more than once) with age greater than 30.
+
+```{sql connection = conn }
+explain select citizen.ssn,citizen.name, patient.patientID, dateOfBirth,age,primaryContactNumber,email,address.locationStreetDetails,
+city,state,zipCode from patient,citizen,address,addressbycity where 
+patient.ssn=citizen.ssn and citizen.addressID=address.addressID and address.addressID=addressbycity.addressID
+group by patient.ssn having count(*) > 1 and citizen.age > 30
+
+```
+Visual Execution Plan:
+
+![Visual Execution Plan of the Query Above](C:\Users\sravyaburugu\Desktop\DBMSCourse\explainPracticumTask8A.png)
+
+Alternative Method : Query 2
+
+```{sql connection= conn }
+
+explain select citizen.ssn, citizen.name, dateOfBirth, age, primaryContactNumber, email, address.locationStreetDetails,
+city,state,zipCode from patient,citizen,address,addressbycity where 
+patient.ssn=citizen.ssn and citizen.addressID=address.addressID and address.addressID=addressbycity.addressID
+and patient.patientID in (select patient.patientID from patient group by patient.ssn having count(*) >1) and
+citizen.age > 30
+group by patient.ssn;
+```
+
+![Visual Execution Plan of the Alternate Query Above](C:\Users\sravyaburugu\Desktop\DBMSCourse\explainPracticumTask8B.png)
+
+Preferred Query: With respect to our database, Query 2 of nested sub query is a better option because during unique look up number of rows returned is less than the rows returned by the join query therby reducing the total cost. However, if execution speed is our concern than join query should be chosen as join query execute faster although the total cost is more.
+
+**TASK 9:Creation of Index and viewing the query Plan**
+
+```{sql connection= conn}
+create index index_age on citizen(age);
+```
+
+Query After index is created
+
+```{sql connection= conn}
+explain select citizen.ssn, citizen.name, dateOfBirth, age, primaryContactNumber, email, address.locationStreetDetails,
+city,state,zipCode from patient,citizen,address,addressbycity where 
+patient.ssn=citizen.ssn and citizen.addressID=address.addressID and address.addressID=addressbycity.addressID
+and patient.patientID in (select patient.patientID from patient group by patient.ssn having count(*) >1) and
+citizen.age > 30
+group by patient.ssn;
+```
+
+![Visual Execution Plan of after index creation](C:\Users\sravyaburugu\Desktop\DBMSCourse\explainTask9A.png)
+With the introduction of the index on the non-key attribute although the execution plan remained the same the performance of the query has decreased as initially in citizen table only 33.33% of rows were filtered but with introduction of index the number of rows filtered has increased to 69.91% increasing the total cost of the query. This could be possible because without the index sequential traversal takes place and the required tuple is found in the initial few tuples but for index based tree traversal the column is sorted and the traversal may be done to lower nodes covering more numbers than intial sequential row scan. Hence, through this we can conclude that index in some instances can decrease the peformance too.
